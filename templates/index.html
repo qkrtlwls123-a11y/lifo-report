@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LIFO 진단 → PPT 자동 생성</title>
+    <style>
+        :root {
+            --primary: #2C3E50;
+            --primary-light: #34495E;
+            --accent: #3498DB;
+            --accent-hover: #2980B9;
+            --success: #27AE60;
+            --danger: #E74C3C;
+            --bg: #F8F9FA;
+            --card: #FFFFFF;
+            --border: #DEE2E6;
+            --text: #2C3E50;
+            --text-light: #6C757D;
+            --shadow: 0 2px 12px rgba(0,0,0,0.08);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: '맑은 고딕', 'Malgun Gothic', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        /* 헤더 */
+        header {
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
+            color: white;
+            padding: 32px 0;
+            margin-bottom: 32px;
+        }
+        header .container {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        header h1 { font-size: 24px; font-weight: 700; }
+        header p { font-size: 14px; opacity: 0.8; margin-top: 4px; }
+        .logo {
+            width: 48px; height: 48px;
+            background: rgba(255,255,255,0.15);
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 24px;
+        }
+
+        /* 카드 */
+        .card {
+            background: var(--card);
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+            padding: 28px;
+            margin-bottom: 24px;
+        }
+        .card h2 {
+            font-size: 17px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .card h2 .step {
+            background: var(--accent);
+            color: white;
+            width: 28px; height: 28px;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 13px;
+        }
+
+        /* 드래그 앤 드롭 영역 */
+        .drop-zone {
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            padding: 48px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: var(--bg);
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--accent);
+            background: #EBF5FB;
+        }
+        .drop-zone .icon { font-size: 40px; margin-bottom: 12px; }
+        .drop-zone p { color: var(--text-light); font-size: 14px; }
+        .drop-zone .btn-select {
+            display: inline-block;
+            margin-top: 12px;
+            padding: 8px 20px;
+            background: var(--accent);
+            color: white;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        /* 파일 리스트 */
+        .file-list {
+            margin-top: 16px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .file-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: #EBF5FB;
+            border-radius: 20px;
+            font-size: 12px;
+            color: var(--accent);
+        }
+        .file-tag .remove {
+            cursor: pointer;
+            font-size: 14px;
+            opacity: 0.6;
+        }
+        .file-tag .remove:hover { opacity: 1; }
+
+        /* 버튼 */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 28px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+        .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+        .btn-success:hover:not(:disabled) { background: #229954; }
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        /* 테이블 */
+        .result-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .result-table th, .result-table td {
+            padding: 10px 12px;
+            text-align: center;
+            border-bottom: 1px solid var(--border);
+        }
+        .result-table th {
+            background: var(--primary);
+            color: white;
+            font-weight: 600;
+            font-size: 12px;
+        }
+        .result-table tbody tr:hover { background: #F8F9FA; }
+        .result-table .name-cell {
+            text-align: left;
+            font-weight: 600;
+        }
+        .result-table .dept-cell {
+            text-align: left;
+            color: var(--text-light);
+            font-size: 12px;
+        }
+        .score-high {
+            font-weight: 700;
+            color: var(--success);
+        }
+        .score-high-minus {
+            font-weight: 700;
+            color: var(--danger);
+        }
+        .type-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 700;
+            background: #EBF5FB;
+            color: var(--accent);
+        }
+
+        /* 에러 메시지 */
+        .errors {
+            margin-top: 12px;
+            padding: 12px 16px;
+            background: #FDEDEC;
+            border-radius: 8px;
+            font-size: 13px;
+            color: var(--danger);
+        }
+        .errors li { margin-left: 16px; margin-top: 4px; }
+
+        /* 정렬 버튼 */
+        .sort-controls {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .sort-btn {
+            padding: 4px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: white;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .sort-btn:hover, .sort-btn.active {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
+        /* 로딩 */
+        .spinner {
+            display: inline-block;
+            width: 18px; height: 18px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* 프로그레스 */
+        .progress-bar {
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 16px;
+            display: none;
+        }
+        .progress-bar .fill {
+            height: 100%;
+            background: var(--accent);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        /* 편집 가능 셀 */
+        .editable {
+            cursor: text;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background 0.15s;
+            min-width: 60px;
+            display: inline-block;
+        }
+        .editable:hover { background: #EBF5FB; }
+        .editable:focus {
+            outline: 2px solid var(--accent);
+            background: white;
+        }
+
+        /* 드래그 핸들 */
+        .drag-handle {
+            cursor: grab;
+            color: var(--text-light);
+            font-size: 16px;
+            padding: 0 4px;
+        }
+        .drag-handle:active { cursor: grabbing; }
+
+        /* 숨김 */
+        .hidden { display: none !important; }
+
+        /* 반응형 */
+        @media (max-width: 768px) {
+            .container { padding: 16px; }
+            header h1 { font-size: 20px; }
+            .card { padding: 20px; }
+            .drop-zone { padding: 32px 16px; }
+            .result-table { font-size: 11px; }
+            .result-table th, .result-table td { padding: 6px 4px; }
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="container">
+        <div class="logo">L</div>
+        <div>
+            <h1>LIFO 진단 결과 → PPT 자동 생성</h1>
+            <p>CLiCK IAM MICRO _ LIFO Analysis Report Generator</p>
+        </div>
+    </div>
+</header>
+
+<div class="container">
+
+    <!-- STEP 1: 파일 업로드 -->
+    <div class="card" id="card-upload">
+        <h2><span class="step">1</span> 엑셀 파일 업로드</h2>
+        <div class="drop-zone" id="dropZone">
+            <div class="icon">📊</div>
+            <p>LIFO 진단 엑셀 파일을 여기에 드래그하거나</p>
+            <label class="btn-select">
+                파일 선택
+                <input type="file" id="fileInput" multiple accept=".xlsx,.xls" style="display:none">
+            </label>
+            <p style="margin-top:8px; font-size:12px; color:#ADB5BD;">.xlsx 파일만 가능 / 여러 파일 동시 업로드 가능</p>
+        </div>
+        <div class="file-list" id="fileList"></div>
+        <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill"></div></div>
+        <div class="btn-group">
+            <button class="btn btn-primary" id="btnUpload" disabled>
+                업로드 및 분석
+            </button>
+        </div>
+    </div>
+
+    <!-- STEP 2: 결과 확인 -->
+    <div class="card hidden" id="card-results">
+        <h2><span class="step">2</span> 진단 결과 확인 및 편집</h2>
+        <p style="font-size:13px; color:var(--text-light); margin-bottom:16px;">
+            이름을 클릭하면 수정할 수 있습니다. 드래그로 순서를 변경하세요.
+        </p>
+
+        <div class="sort-controls">
+            <span style="font-size:12px; color:var(--text-light); padding:4px 0;">정렬:</span>
+            <button class="sort-btn active" data-sort="original">업로드 순</button>
+            <button class="sort-btn" data-sort="name">이름순</button>
+            <button class="sort-btn" data-sort="dept">부서순</button>
+            <button class="sort-btn" data-sort="top-type">유형순</button>
+        </div>
+
+        <div style="overflow-x:auto;">
+            <table class="result-table">
+                <thead>
+                    <tr>
+                        <th style="width:30px;"></th>
+                        <th>No.</th>
+                        <th>이름</th>
+                        <th>부서</th>
+                        <th>1순위</th>
+                        <th colspan="4">+ (긍정적 상황)</th>
+                        <th colspan="4">- (부정적 상황)</th>
+                    </tr>
+                    <tr>
+                        <th></th><th></th><th></th><th></th><th></th>
+                        <th>S/G</th><th>C/T</th><th>C/H</th><th>A/D</th>
+                        <th>S/G</th><th>C/T</th><th>C/H</th><th>A/D</th>
+                    </tr>
+                </thead>
+                <tbody id="resultBody">
+                </tbody>
+            </table>
+        </div>
+
+        <div class="errors hidden" id="errorList">
+            <strong>오류:</strong>
+            <ul id="errorItems"></ul>
+        </div>
+
+        <div class="btn-group">
+            <button class="btn btn-primary" id="btnAddMore">+ 파일 추가</button>
+            <button class="btn btn-success" id="btnGenerate">PPT 생성 및 다운로드</button>
+        </div>
+    </div>
+
+    <!-- STEP 3: 다운로드 -->
+    <div class="card hidden" id="card-download">
+        <h2><span class="step">3</span> PPT 다운로드</h2>
+        <p style="text-align:center; padding:24px 0;">
+            <span style="font-size:48px;">✅</span><br><br>
+            <strong id="downloadInfo"></strong><br>
+            <span style="font-size:13px; color:var(--text-light);">총 <span id="slideCount"></span>장 슬라이드 (슬라이드당 2명)</span>
+        </p>
+        <div class="btn-group" style="justify-content:center;">
+            <a class="btn btn-success" id="btnDownload" href="#" download>PPT 다운로드</a>
+            <button class="btn btn-primary" id="btnReset">새로 만들기</button>
+        </div>
+    </div>
+
+</div>
+
+<script>
+// ── 전역 상태 ──────────────────────────────────────────────
+let selectedFiles = [];
+let parsedResults = [];
+let draggedRow = null;
+
+// ── DOM 요소 ───────────────────────────────────────────────
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const fileList = document.getElementById('fileList');
+const btnUpload = document.getElementById('btnUpload');
+const btnGenerate = document.getElementById('btnGenerate');
+const btnAddMore = document.getElementById('btnAddMore');
+const btnDownload = document.getElementById('btnDownload');
+const btnReset = document.getElementById('btnReset');
+const resultBody = document.getElementById('resultBody');
+const progressBar = document.getElementById('progressBar');
+const progressFill = document.getElementById('progressFill');
+const cardUpload = document.getElementById('card-upload');
+const cardResults = document.getElementById('card-results');
+const cardDownload = document.getElementById('card-download');
+const errorList = document.getElementById('errorList');
+const errorItems = document.getElementById('errorItems');
+
+// ── 파일 선택 ──────────────────────────────────────────────
+dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    addFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', e => addFiles(e.target.files));
+
+function addFiles(files) {
+    for (const f of files) {
+        if (f.name.endsWith('.xlsx') || f.name.endsWith('.xls')) {
+            if (!selectedFiles.find(sf => sf.name === f.name)) {
+                selectedFiles.push(f);
+            }
+        }
+    }
+    renderFileList();
+}
+
+function renderFileList() {
+    fileList.innerHTML = selectedFiles.map((f, i) =>
+        `<span class="file-tag">
+            📄 ${f.name}
+            <span class="remove" onclick="removeFile(${i})">✕</span>
+        </span>`
+    ).join('');
+    btnUpload.disabled = selectedFiles.length === 0;
+}
+
+function removeFile(index) {
+    selectedFiles.splice(index, 1);
+    renderFileList();
+}
+
+// ── 업로드 및 분석 ─────────────────────────────────────────
+btnUpload.addEventListener('click', async () => {
+    if (selectedFiles.length === 0) return;
+
+    btnUpload.disabled = true;
+    btnUpload.innerHTML = '<span class="spinner"></span> 분석 중...';
+    progressBar.style.display = 'block';
+    progressFill.style.width = '30%';
+
+    const formData = new FormData();
+    selectedFiles.forEach(f => formData.append('files', f));
+
+    try {
+        const res = await fetch('/upload', { method: 'POST', body: formData });
+        progressFill.style.width = '80%';
+
+        const data = await res.json();
+        progressFill.style.width = '100%';
+
+        if (data.results && data.results.length > 0) {
+            parsedResults = [...parsedResults, ...data.results];
+            renderResults();
+            cardResults.classList.remove('hidden');
+        }
+
+        if (data.errors && data.errors.length > 0) {
+            errorList.classList.remove('hidden');
+            errorItems.innerHTML = data.errors.map(e => `<li>${e}</li>`).join('');
+        } else {
+            errorList.classList.add('hidden');
+        }
+
+        // 파일 초기화
+        selectedFiles = [];
+        renderFileList();
+        fileInput.value = '';
+
+    } catch (err) {
+        alert('오류: ' + err.message);
+    } finally {
+        btnUpload.disabled = false;
+        btnUpload.innerHTML = '업로드 및 분석';
+        setTimeout(() => {
+            progressBar.style.display = 'none';
+            progressFill.style.width = '0%';
+        }, 500);
+    }
+});
+
+// ── 결과 테이블 렌더링 ─────────────────────────────────────
+function renderResults() {
+    resultBody.innerHTML = parsedResults.map((r, i) => {
+        const plusMax = Math.max(r.plus.SG, r.plus.CT, r.plus.CH, r.plus.AD);
+        const minusMax = Math.max(r.minus.SG, r.minus.CT, r.minus.CH, r.minus.AD);
+
+        function scoreClass(val, max, type) {
+            return val === max ? (type === 'plus' ? 'score-high' : 'score-high-minus') : '';
+        }
+
+        return `<tr draggable="true" data-index="${i}"
+                    ondragstart="onDragStart(event)" ondragover="onDragOver(event)"
+                    ondrop="onDrop(event)" ondragend="onDragEnd(event)">
+            <td class="drag-handle">⠿</td>
+            <td>${i + 1}</td>
+            <td class="name-cell">
+                <span class="editable" contenteditable="true"
+                      onblur="updateField(${i}, 'name', this.textContent)">${r.name}</span>
+            </td>
+            <td class="dept-cell">
+                <span class="editable" contenteditable="true"
+                      onblur="updateField(${i}, 'dept', this.textContent)">${r.dept}</span>
+            </td>
+            <td><span class="type-badge">${r.top_type}</span></td>
+            <td class="${scoreClass(r.plus.SG, plusMax, 'plus')}">${r.plus.SG}</td>
+            <td class="${scoreClass(r.plus.CT, plusMax, 'plus')}">${r.plus.CT}</td>
+            <td class="${scoreClass(r.plus.CH, plusMax, 'plus')}">${r.plus.CH}</td>
+            <td class="${scoreClass(r.plus.AD, plusMax, 'plus')}">${r.plus.AD}</td>
+            <td class="${scoreClass(r.minus.SG, minusMax, 'minus')}">${r.minus.SG}</td>
+            <td class="${scoreClass(r.minus.CT, minusMax, 'minus')}">${r.minus.CT}</td>
+            <td class="${scoreClass(r.minus.CH, minusMax, 'minus')}">${r.minus.CH}</td>
+            <td class="${scoreClass(r.minus.AD, minusMax, 'minus')}">${r.minus.AD}</td>
+        </tr>`;
+    }).join('');
+}
+
+function updateField(index, field, value) {
+    parsedResults[index][field] = value.trim();
+}
+
+// ── 드래그 정렬 ────────────────────────────────────────────
+function onDragStart(e) {
+    draggedRow = e.target.closest('tr');
+    draggedRow.style.opacity = '0.4';
+    e.dataTransfer.effectAllowed = 'move';
+}
+function onDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const target = e.target.closest('tr');
+    if (target && target !== draggedRow) {
+        target.style.borderTop = '2px solid var(--accent)';
+    }
+}
+function onDrop(e) {
+    e.preventDefault();
+    const target = e.target.closest('tr');
+    if (target && target !== draggedRow) {
+        const fromIdx = parseInt(draggedRow.dataset.index);
+        const toIdx = parseInt(target.dataset.index);
+        const [item] = parsedResults.splice(fromIdx, 1);
+        parsedResults.splice(toIdx, 0, item);
+        renderResults();
+    }
+}
+function onDragEnd(e) {
+    document.querySelectorAll('tr').forEach(r => {
+        r.style.opacity = '1';
+        r.style.borderTop = '';
+    });
+    draggedRow = null;
+}
+
+// ── 정렬 ───────────────────────────────────────────────────
+document.querySelectorAll('.sort-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        const sort = btn.dataset.sort;
+        if (sort === 'name') parsedResults.sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+        else if (sort === 'dept') parsedResults.sort((a, b) => a.dept.localeCompare(b.dept, 'ko'));
+        else if (sort === 'top-type') parsedResults.sort((a, b) => a.top_type.localeCompare(b.top_type));
+
+        renderResults();
+    });
+});
+
+// ── 파일 추가 ──────────────────────────────────────────────
+btnAddMore.addEventListener('click', () => {
+    fileInput.click();
+});
+
+// ── PPT 생성 ───────────────────────────────────────────────
+btnGenerate.addEventListener('click', async () => {
+    if (parsedResults.length === 0) return;
+
+    btnGenerate.disabled = true;
+    btnGenerate.innerHTML = '<span class="spinner"></span> PPT 생성 중...';
+
+    try {
+        const res = await fetch('/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ participants: parsedResults })
+        });
+
+        const data = await res.json();
+
+        if (data.error) {
+            alert('오류: ' + data.error);
+            return;
+        }
+
+        const slideCount = Math.ceil(parsedResults.length / 2);
+        document.getElementById('downloadInfo').textContent =
+            `${parsedResults.length}명의 LIFO 진단 리포트가 생성되었습니다.`;
+        document.getElementById('slideCount').textContent = slideCount;
+        btnDownload.href = data.download_url;
+        btnDownload.download = data.filename;
+
+        cardResults.classList.add('hidden');
+        cardDownload.classList.remove('hidden');
+
+    } catch (err) {
+        alert('오류: ' + err.message);
+    } finally {
+        btnGenerate.disabled = false;
+        btnGenerate.innerHTML = 'PPT 생성 및 다운로드';
+    }
+});
+
+// ── 리셋 ───────────────────────────────────────────────────
+btnReset.addEventListener('click', () => {
+    parsedResults = [];
+    selectedFiles = [];
+    renderFileList();
+    resultBody.innerHTML = '';
+    cardDownload.classList.add('hidden');
+    cardResults.classList.add('hidden');
+    cardUpload.classList.remove('hidden');
+    errorList.classList.add('hidden');
+});
+</script>
+
+</body>
+</html>
