@@ -230,9 +230,14 @@ st.markdown("""
 
 st.divider()
 
-# 사용법 안내
-with st.expander('💡 사용 방법 보기', expanded=False):
-    st.markdown("""
+# ── 파일 업로드 (sidebar 또는 하단에 배치하기 위해 먼저 처리)
+# 결과가 없을 때는 메인에, 결과가 있을 때는 하단에 표시
+has_results = 'results' in st.session_state and st.session_state['results']
+
+if not has_results:
+    # 첫 화면: 사용법 + 업로드가 메인
+    with st.expander('💡 사용 방법 보기', expanded=False):
+        st.markdown("""
 <div class="how-box">
 <ol>
     <li><b>엑셀 파일 업로드</b> — LIFO 행동강약점 진단 엑셀(.xlsx)을 여러 개 한꺼번에 올려주세요.</li>
@@ -242,24 +247,25 @@ with st.expander('💡 사용 방법 보기', expanded=False):
 </div>
 """, unsafe_allow_html=True)
 
-# ── STEP 1: 파일 업로드
-st.markdown('<span class="step-label">1</span> <b>엑셀 파일 업로드</b>', unsafe_allow_html=True)
+    st.markdown('<span class="step-label">1</span> <b>엑셀 파일 업로드</b>', unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(
     '파일 선택',
     type=['xlsx'],
     accept_multiple_files=True,
-    label_visibility='collapsed',
+    label_visibility='collapsed' if not has_results else 'visible',
     help='LIFO 행동강약점(행동유형) 진단지 엑셀 파일을 선택하세요. 여러 개를 한 번에 올릴 수 있습니다.',
+    key='file_uploader',
 )
 
 if uploaded_files:
-    # 파일 해시로 변경 감지 (파일 개수 + 파일명 조합)
+    # 파일 변경 감지
     file_key = '|'.join(sorted(f.name for f in uploaded_files))
     if st.session_state.get('_file_key') != file_key:
         results = []
         errors = []
-        progress = st.progress(0, text='분석 중...')
+        progress_placeholder = st.empty()
+        progress = progress_placeholder.progress(0, text='분석 중...')
         for idx, f in enumerate(uploaded_files):
             try:
                 data = parse_lifo_excel(f.read(), f.name)
@@ -268,25 +274,48 @@ if uploaded_files:
             except Exception as e:
                 errors.append(f'{f.name}: {e}')
             progress.progress((idx + 1) / len(uploaded_files), text=f'{idx+1}/{len(uploaded_files)} 분석 완료')
-        progress.empty()
+        progress_placeholder.empty()
         st.session_state['results'] = results
         st.session_state['errors'] = errors
         st.session_state['_file_key'] = file_key
+        st.session_state['ppt_buf'] = None  # 새 파일이면 기존 PPT 초기화
+        st.rerun()
 
-    results = st.session_state['results']
-    errors = st.session_state['errors']
+    results = st.session_state.get('results', [])
+    errors = st.session_state.get('errors', [])
 
     if errors:
         for err in errors:
             st.error(err)
 
     if results:
-        st.success(f'{len(results)}명의 진단 데이터를 추출했습니다.')
-
-        st.divider()
-
-        # ── STEP 2: 결과 확인
-        st.markdown('<span class="step-label">2</span> <b>결과 확인</b>', unsafe_allow_html=True)
+        # ── 결과 헤더 + PPT 다운로드 버튼을 같은 줄에 ──
+        col_title, col_btn = st.columns([3, 2])
+        with col_title:
+            st.markdown(
+                f'<span class="step-label">✓</span> <b>결과 확인</b> '
+                f'<span style="color:#888; font-size:0.85rem;">({len(results)}명 / {(len(results)+1)//2}슬라이드)</span>',
+                unsafe_allow_html=True,
+            )
+        with col_btn:
+            # PPT 생성이 안 됐으면 생성 버튼, 됐으면 다운로드 버튼
+            if st.session_state.get('ppt_buf') is None:
+                if st.button('📥 PPT 생성', type='primary', use_container_width=True):
+                    with st.spinner('PPT 생성 중...'):
+                        buf = generate_pptx(results)
+                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        st.session_state['ppt_buf'] = buf
+                        st.session_state['ppt_filename'] = f'LIFO_Report_{timestamp}.pptx'
+                    st.rerun()
+            else:
+                st.download_button(
+                    label=f'💾 PPT 다운로드',
+                    data=st.session_state['ppt_buf'],
+                    file_name=st.session_state['ppt_filename'],
+                    mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                    use_container_width=True,
+                    type='primary',
+                )
 
         # 정렬
         sort_col = st.radio(
@@ -330,30 +359,17 @@ if uploaded_files:
                     )
                     if new_name != r['name']:
                         r['name'] = new_name
+                        st.session_state['ppt_buf'] = None  # 이름 바꾸면 PPT 재생성 필요
 
         st.divider()
 
-        # ── STEP 3: PPT 생성
-        st.markdown('<span class="step-label">3</span> <b>PPT 생성</b>', unsafe_allow_html=True)
+        # ── 파일 추가/변경 (하단)
+        st.markdown(
+            '<span style="color:#888; font-size:0.85rem;">📂 파일을 추가하거나 변경하려면 위의 업로더를 사용하세요.</span>',
+            unsafe_allow_html=True,
+        )
 
-        slide_count = (len(results) + 1) // 2
-        st.caption(f'{len(results)}명 → {slide_count}장 슬라이드 (슬라이드당 2명)')
-
-        if st.button('📥 PPT 생성 및 다운로드', type='primary', use_container_width=True):
-            with st.spinner('PPT를 만들고 있습니다...'):
-                buf = generate_pptx(results)
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                filename = f'LIFO_Report_{timestamp}.pptx'
-
-            st.balloons()
-            st.download_button(
-                label=f'💾 {filename} 저장',
-                data=buf,
-                file_name=filename,
-                mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                use_container_width=True,
-            )
-else:
+elif not has_results:
     st.markdown("""
     <div style="text-align:center; padding: 3rem 1rem; color: #aaa;">
         <p style="font-size: 3rem; margin-bottom: 0.5rem;">📂</p>
