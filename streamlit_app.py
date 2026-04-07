@@ -392,14 +392,20 @@ if uploaded_files:
 
         # 오류 상세 내역
         if error_count:
-            with st.expander(f'⚠️ 응답 오류 상세 ({error_count}명)'):
-                for r in sorted_results:
-                    errs = r.get('response_errors', [])
-                    if not errs:
-                        continue
-                    st.markdown(f"**{r['name']}** ({r['dept']}) — {len(errs)}건 오류")
-                    for e in errs:
-                        st.caption(f"  문항 {e['questions']}: 응답 {e['scores']}")
+            error_persons = [r for r in sorted_results if r.get('response_errors')]
+            with st.expander(f'⚠️ 응답 오류 ({error_count}명)'):
+                # 명단 / 상세 탭
+                tab_list, tab_detail = st.tabs(['📋 오류 명단', '🔍 오류 상세'])
+                with tab_list:
+                    for r in error_persons:
+                        errs = r['response_errors']
+                        st.markdown(f"- **{r['name']}** ({r['dept']}) — {len(errs)}건")
+                with tab_detail:
+                    for r in error_persons:
+                        errs = r['response_errors']
+                        with st.expander(f"**{r['name']}** ({r['dept']}) — {len(errs)}건"):
+                            for e in errs:
+                                st.caption(f"문항 {e['questions']}: 응답 {e['scores']}")
 
         # 이름/부서 수정
         with st.expander('✏️ 이름이 잘못 나왔나요? 클릭해서 수정하세요'):
