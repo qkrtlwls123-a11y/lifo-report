@@ -15,6 +15,12 @@ from lxml import etree
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), 'template.pptx')
 
+# 직급 키워드 (이름에서 제거 대상)
+TITLE_KEYWORDS = [
+    '책임', '선임', '수석', '팀장', '부장', '차장', '과장', '대리', '사원',
+    '매니저', '파트장', '실장', '본부장', '상무', '전무', '이사',
+]
+
 
 # ── 엑셀 파싱 ───────────────────────────────────────────────
 def parse_lifo_excel(file_bytes, original_filename=''):
@@ -49,17 +55,25 @@ def parse_lifo_excel(file_bytes, original_filename=''):
     }
 
 
+def strip_title(name):
+    """이름에서 직급 키워드를 제거합니다. '정청산 책임' → '정청산'"""
+    result = name.strip()
+    for title in TITLE_KEYWORDS:
+        result = re.sub(rf'\s*{title}\s*$', '', result)
+    return result.strip()
+
+
 def extract_name_from_filename(filename):
     base = os.path.splitext(filename)[0]
     match = re.search(r'진단지[_\s]+(.+?)_([^_]+?)\s*$', base)
     if match:
-        return match.group(2).strip(), match.group(1).strip()
+        return strip_title(match.group(2).strip()), match.group(1).strip()
     match2 = re.search(r'진단지[_\s]+(.+?)\s+(\S+)\s*$', base)
     if match2:
-        return match2.group(2).strip(), match2.group(1).strip()
+        return strip_title(match2.group(2).strip()), match2.group(1).strip()
     parts = re.split(r'[_]', base)
     if len(parts) >= 2:
-        return parts[-1].strip(), parts[-2].strip() if len(parts) >= 3 else ''
+        return strip_title(parts[-1].strip()), parts[-2].strip() if len(parts) >= 3 else ''
     return base, ''
 
 
@@ -182,45 +196,82 @@ def generate_pptx(participants):
 
 
 # ── Streamlit UI ─────────────────────────────────────────────
-st.set_page_config(page_title='LIFO → PPT', page_icon='📊', layout='wide')
+st.set_page_config(page_title='LIFO 진단 → PPT', page_icon='📊', layout='centered')
 
 st.markdown("""
 <style>
-    .block-container { max-width: 1000px; }
-    .stDataFrame { font-size: 13px; }
-    div[data-testid="stFileUploader"] { margin-bottom: 0; }
-    .red-score { color: #FF0000; font-weight: bold; }
-    .black-score { color: #000000; }
+    .block-container { max-width: 960px; padding-top: 2rem; }
+    header[data-testid="stHeader"] { background: transparent; }
+    .hero { text-align: center; padding: 1rem 0 0.5rem; }
+    .hero h1 { font-size: 2rem; margin-bottom: 0.25rem; }
+    .hero p { color: #888; font-size: 0.95rem; }
+    .step-label {
+        display: inline-block; background: #FF4B4B; color: white;
+        border-radius: 50%; width: 26px; height: 26px; line-height: 26px;
+        text-align: center; font-size: 13px; font-weight: 700;
+        margin-right: 6px; vertical-align: middle;
+    }
+    .how-box {
+        background: #f8f9fb; border-radius: 12px; padding: 1.2rem 1.5rem;
+        border: 1px solid #e8eaed; margin: 0.5rem 0 1rem;
+    }
+    .how-box ol { margin: 0.5rem 0 0 1.2rem; padding: 0; }
+    .how-box li { margin-bottom: 0.3rem; color: #444; font-size: 0.9rem; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title('📊 LIFO 진단 → PPT 자동 생성')
-st.caption('CLiCK IAM MICRO _ LIFO Analysis Report Generator')
+# 헤더
+st.markdown("""
+<div class="hero">
+    <h1>📊 LIFO 진단 → PPT 자동 생성</h1>
+    <p>엑셀 진단 파일을 올리면, 서식이 적용된 PPT 리포트를 자동으로 만들어 드립니다.</p>
+</div>
+""", unsafe_allow_html=True)
+
 st.divider()
 
+# 사용법 안내
+with st.expander('💡 사용 방법 보기', expanded=False):
+    st.markdown("""
+<div class="how-box">
+<ol>
+    <li><b>엑셀 파일 업로드</b> — LIFO 행동강약점 진단 엑셀(.xlsx)을 여러 개 한꺼번에 올려주세요.</li>
+    <li><b>결과 확인</b> — 자동으로 이름, 부서, 점수가 추출됩니다. 이름이 잘못 나왔으면 수정할 수 있습니다.</li>
+    <li><b>PPT 다운로드</b> — 버튼 하나로 서식이 적용된 PPT가 생성됩니다.</li>
+</ol>
+</div>
+""", unsafe_allow_html=True)
+
 # ── STEP 1: 파일 업로드
-st.subheader('① 엑셀 파일 업로드')
+st.markdown('<span class="step-label">1</span> <b>엑셀 파일 업로드</b>', unsafe_allow_html=True)
+
 uploaded_files = st.file_uploader(
-    'LIFO 진단 엑셀 파일을 선택하세요 (.xlsx)',
+    '파일 선택',
     type=['xlsx'],
     accept_multiple_files=True,
+    label_visibility='collapsed',
+    help='LIFO 행동강약점(행동유형) 진단지 엑셀 파일을 선택하세요. 여러 개를 한 번에 올릴 수 있습니다.',
 )
 
 if uploaded_files:
-    # 파싱
-    if 'results' not in st.session_state or st.session_state.get('_file_count') != len(uploaded_files):
+    # 파일 해시로 변경 감지 (파일 개수 + 파일명 조합)
+    file_key = '|'.join(sorted(f.name for f in uploaded_files))
+    if st.session_state.get('_file_key') != file_key:
         results = []
         errors = []
-        for f in uploaded_files:
+        progress = st.progress(0, text='분석 중...')
+        for idx, f in enumerate(uploaded_files):
             try:
                 data = parse_lifo_excel(f.read(), f.name)
                 f.seek(0)
                 results.append(data)
             except Exception as e:
                 errors.append(f'{f.name}: {e}')
+            progress.progress((idx + 1) / len(uploaded_files), text=f'{idx+1}/{len(uploaded_files)} 분석 완료')
+        progress.empty()
         st.session_state['results'] = results
         st.session_state['errors'] = errors
-        st.session_state['_file_count'] = len(uploaded_files)
+        st.session_state['_file_key'] = file_key
 
     results = st.session_state['results']
     errors = st.session_state['errors']
@@ -230,77 +281,82 @@ if uploaded_files:
             st.error(err)
 
     if results:
+        st.success(f'{len(results)}명의 진단 데이터를 추출했습니다.')
+
         st.divider()
-        st.subheader(f'② 진단 결과 확인 ({len(results)}명)')
+
+        # ── STEP 2: 결과 확인
+        st.markdown('<span class="step-label">2</span> <b>결과 확인</b>', unsafe_allow_html=True)
 
         # 정렬
-        sort_col = st.radio('정렬', ['업로드 순', '이름순', '부서순', '유형순'], horizontal=True)
+        sort_col = st.radio(
+            '정렬 기준', ['업로드 순', '이름순', '부서순', '유형순'],
+            horizontal=True, label_visibility='collapsed',
+        )
+        sorted_results = list(results)
         if sort_col == '이름순':
-            results = sorted(results, key=lambda x: x['name'])
+            sorted_results = sorted(results, key=lambda x: x['name'])
         elif sort_col == '부서순':
-            results = sorted(results, key=lambda x: x['dept'])
+            sorted_results = sorted(results, key=lambda x: x['dept'])
         elif sort_col == '유형순':
-            results = sorted(results, key=lambda x: x['top_type'])
+            sorted_results = sorted(results, key=lambda x: x['top_type'])
 
-        # 테이블 표시
-        def fmt_score(plus_val, minus_val):
-            p_red, m_red = check_red_condition(plus_val, minus_val)
-            p_style = 'red-score' if p_red else 'black-score'
-            m_style = 'red-score' if m_red else 'black-score'
-            return (
-                f'<span class="{p_style}">{plus_val}</span>',
-                f'<span class="{m_style}">{minus_val}</span>',
-            )
-
-        header = '| No. | 이름 | 부서 | 1순위 | +SG | +CT | +CH | +AD | -SG | -CT | -CH | -AD |\n'
+        # 마크다운 테이블
+        header = '| # | 이름 | 부서 | 유형 | +SG | +CT | +CH | +AD | -SG | -CT | -CH | -AD |\n'
         header += '|--:|:--|:--|:--:|--:|--:|--:|--:|--:|--:|--:|--:|\n'
         rows_md = ''
-        for i, r in enumerate(results):
-            p = r['plus']
-            m = r['minus']
-            row_parts = [f"{i+1}", r['name'], r['dept'], f"`{r['top_type']}`"]
+        for i, r in enumerate(sorted_results):
+            p, m = r['plus'], r['minus']
+            row = [f"{i+1}", r['name'], r['dept'], f"`{r['top_type']}`"]
             for key in ['SG', 'CT', 'CH', 'AD']:
                 p_red, _ = check_red_condition(p[key], m[key])
-                row_parts.append(f"**:red[{p[key]}]**" if p_red else str(p[key]))
+                row.append(f"**:red[{p[key]}]**" if p_red else str(p[key]))
             for key in ['SG', 'CT', 'CH', 'AD']:
                 _, m_red = check_red_condition(p[key], m[key])
-                row_parts.append(f"**:red[{m[key]}]**" if m_red else str(m[key]))
-            rows_md += '| ' + ' | '.join(row_parts) + ' |\n'
+                row.append(f"**:red[{m[key]}]**" if m_red else str(m[key]))
+            rows_md += '| ' + ' | '.join(row) + ' |\n'
 
-        st.markdown(header + rows_md, unsafe_allow_html=True)
+        st.markdown(header + rows_md)
 
-        # 이름 수정
-        with st.expander('이름/부서 수정'):
-            edited = False
-            cols = st.columns(3)
+        # 이름/부서 수정
+        with st.expander('✏️ 이름이 잘못 나왔나요? 클릭해서 수정하세요'):
+            cols = st.columns(4)
             for i, r in enumerate(results):
-                col = cols[i % 3]
-                with col:
-                    new_name = st.text_input(f'{r["name"]}', value=r['name'], key=f'name_{i}')
-                    new_dept = st.text_input(f'{r["name"]} 부서', value=r['dept'], key=f'dept_{i}')
-                    if new_name != r['name'] or new_dept != r['dept']:
+                with cols[i % 4]:
+                    new_name = st.text_input(
+                        '이름', value=r['name'], key=f'name_{i}',
+                        label_visibility='collapsed',
+                        placeholder=f'{r["name"]}',
+                    )
+                    if new_name != r['name']:
                         r['name'] = new_name
-                        r['dept'] = new_dept
-                        edited = True
 
         st.divider()
-        st.subheader('③ PPT 생성')
-        slide_count = (len(results) + 1) // 2
-        st.info(f'{len(results)}명 → {slide_count}장 슬라이드 (슬라이드당 2명)')
 
-        if st.button('🎯 PPT 생성 및 다운로드', type='primary', use_container_width=True):
-            with st.spinner('PPT 생성 중...'):
+        # ── STEP 3: PPT 생성
+        st.markdown('<span class="step-label">3</span> <b>PPT 생성</b>', unsafe_allow_html=True)
+
+        slide_count = (len(results) + 1) // 2
+        st.caption(f'{len(results)}명 → {slide_count}장 슬라이드 (슬라이드당 2명)')
+
+        if st.button('📥 PPT 생성 및 다운로드', type='primary', use_container_width=True):
+            with st.spinner('PPT를 만들고 있습니다...'):
                 buf = generate_pptx(results)
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 filename = f'LIFO_Report_{timestamp}.pptx'
 
-            st.success(f'{len(results)}명의 리포트가 생성되었습니다!')
+            st.balloons()
             st.download_button(
-                label='📥 PPT 다운로드',
+                label=f'💾 {filename} 저장',
                 data=buf,
                 file_name=filename,
                 mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',
                 use_container_width=True,
             )
 else:
-    st.info('엑셀 파일을 업로드하면 자동으로 분석됩니다.')
+    st.markdown("""
+    <div style="text-align:center; padding: 3rem 1rem; color: #aaa;">
+        <p style="font-size: 3rem; margin-bottom: 0.5rem;">📂</p>
+        <p>위의 <b>Browse files</b> 버튼을 눌러<br>LIFO 진단 엑셀 파일을 업로드하세요.</p>
+    </div>
+    """, unsafe_allow_html=True)
