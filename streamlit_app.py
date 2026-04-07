@@ -29,6 +29,11 @@ def parse_lifo_excel(file_bytes, original_filename=''):
     if len(sheets) < 2:
         raise ValueError(f"시트가 2개 이상이어야 합니다. (현재: {len(sheets)}개)")
 
+    # 시트1에서 응답 규칙 검증
+    ws1 = wb[sheets[0]]
+    response_errors = validate_responses(ws1)
+
+    # 시트2에서 점수 추출
     ws = wb[sheets[1]]
     s_plus = ws['D12'].value or 0
     c_plus = ws['F12'].value or 0
@@ -52,7 +57,35 @@ def parse_lifo_excel(file_bytes, original_filename=''):
         'top_type': str(top_type).strip(),
         'plus': {'SG': int(s_plus), 'CT': int(c_plus), 'CH': int(ch_plus), 'AD': int(a_plus)},
         'minus': {'SG': int(g_minus), 'CT': int(t_minus), 'CH': int(h_minus), 'AD': int(d_minus)},
+        'response_errors': response_errors,
     }
+
+
+def validate_responses(ws):
+    """시트1의 응답이 규칙(각 4문항 그룹에서 4,3,2,1 중복 없이 배정)을 지켰는지 검증합니다."""
+    # E열에서 C열 문항번호를 기준으로 4개씩 그룹화
+    groups = []
+    current_group = []
+    for r in range(5, 128):
+        c_val = ws[f'C{r}'].value
+        e_val = ws[f'E{r}'].value
+        if c_val is not None and e_val is not None:
+            try:
+                current_group.append((int(c_val), int(e_val)))
+            except (ValueError, TypeError):
+                continue
+            if len(current_group) == 4:
+                groups.append(current_group)
+                current_group = []
+
+    errors = []
+    for g in groups:
+        scores = [item[1] for item in g]
+        if sorted(scores) != [1, 2, 3, 4]:
+            q_start, q_end = g[0][0], g[3][0]
+            errors.append({'questions': f'{q_start}-{q_end}', 'scores': scores})
+
+    return errors
 
 
 def strip_title(name):
@@ -331,8 +364,12 @@ if uploaded_files:
             sorted_results = sorted(results, key=lambda x: x['top_type'])
 
         # 마크다운 테이블
-        header = '| # | 이름 | 부서 | 유형 | +SG | +CT | +CH | +AD | -SG | -CT | -CH | -AD |\n'
-        header += '|--:|:--|:--|:--:|--:|--:|--:|--:|--:|--:|--:|--:|\n'
+        error_count = sum(1 for r in sorted_results if r.get('response_errors'))
+        if error_count:
+            st.warning(f'응답 규칙 오류가 {error_count}명에게서 발견되었습니다. (각 문항 그룹에서 4,3,2,1을 중복 없이 배정해야 합니다)')
+
+        header = '| # | 이름 | 부서 | 유형 | +SG | +CT | +CH | +AD | -SG | -CT | -CH | -AD | 상태 |\n'
+        header += '|--:|:--|:--|:--:|--:|--:|--:|--:|--:|--:|--:|--:|:--:|\n'
         rows_md = ''
         for i, r in enumerate(sorted_results):
             p, m = r['plus'], r['minus']
@@ -343,9 +380,26 @@ if uploaded_files:
             for key in ['SG', 'CT', 'CH', 'AD']:
                 _, m_red = check_red_condition(p[key], m[key])
                 row.append(f"**:red[{m[key]}]**" if m_red else str(m[key]))
+            # 응답 오류 표시
+            resp_errs = r.get('response_errors', [])
+            if resp_errs:
+                row.append(f'**:orange[오류 {len(resp_errs)}건]**')
+            else:
+                row.append('')
             rows_md += '| ' + ' | '.join(row) + ' |\n'
 
         st.markdown(header + rows_md)
+
+        # 오류 상세 내역
+        if error_count:
+            with st.expander(f'⚠️ 응답 오류 상세 ({error_count}명)'):
+                for r in sorted_results:
+                    errs = r.get('response_errors', [])
+                    if not errs:
+                        continue
+                    st.markdown(f"**{r['name']}** ({r['dept']}) — {len(errs)}건 오류")
+                    for e in errs:
+                        st.caption(f"  문항 {e['questions']}: 응답 {e['scores']}")
 
         # 이름/부서 수정
         with st.expander('✏️ 이름이 잘못 나왔나요? 클릭해서 수정하세요'):
