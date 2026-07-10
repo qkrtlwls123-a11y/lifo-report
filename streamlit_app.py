@@ -9,11 +9,15 @@ from copy import deepcopy
 from datetime import datetime
 import streamlit as st
 import openpyxl
+from pypdf import PdfReader
 from pptx import Presentation
 from pptx.util import Pt, Emu
 from lxml import etree
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), 'template.pptx')
+
+# LIFO 유형 순서 (S/G, C/T, C/H, A/D)
+LIFO_KEYS = ['SG', 'CT', 'CH', 'AD']
 
 # 직급 키워드 (이름에서 제거 대상)
 TITLE_KEYWORDS = [
@@ -59,6 +63,89 @@ def parse_lifo_excel(file_bytes, original_filename=''):
         'minus': {'SG': int(g_minus), 'CT': int(t_minus), 'CH': int(h_minus), 'AD': int(d_minus)},
         'response_errors': response_errors,
     }
+
+
+def parse_lifo_file(file_bytes, original_filename=''):
+    """확장자에 따라 엑셀/PDF 파서로 분기합니다."""
+    if original_filename.lower().endswith('.pdf'):
+        return parse_lifo_pdf(file_bytes, original_filename)
+    return parse_lifo_excel(file_bytes, original_filename)
+
+
+# ── PDF 파싱 ────────────────────────────────────────────────
+def parse_lifo_pdf(file_bytes, original_filename=''):
+    """PDF 진단 결과지에서 LIFO 점수를 추출합니다.
+
+    엑셀과 동일한 데이터를 담은 PDF 리포트를 지원합니다.
+    - "TOTAL +" / "TOTAL -" 행에서 4개 유형 점수를 읽습니다.
+    - "문항N V" 응답으로 규칙(4,3,2,1 배정)을 검증합니다.
+    """
+    reader = PdfReader(io.BytesIO(file_bytes))
+    text = "\n".join((page.extract_text() or "") for page in reader.pages)
+
+    plus = _parse_total_line(text, '+')
+    minus = _parse_total_line(text, '-')
+    if plus is None:
+        plus = _parse_component_scores(text, upper=True)
+    if minus is None:
+        minus = _parse_component_scores(text, upper=False)
+    if plus is None or minus is None:
+        raise ValueError('PDF에서 LIFO 점수를 찾을 수 없습니다. (TOTAL +/- 행 확인)')
+
+    name, dept = extract_name_from_filename(original_filename)
+
+    m = re.search(r'(SG|CT|CH|AD)\s*나의\s*유형|나의\s*유형\s*(SG|CT|CH|AD)', text)
+    top_type = (m.group(1) or m.group(2)) if m else max(plus, key=plus.get)
+
+    return {
+        'name': name, 'dept': dept,
+        'top_type': str(top_type).strip(),
+        'plus': {k: int(plus[k]) for k in LIFO_KEYS},
+        'minus': {k: int(minus[k]) for k in LIFO_KEYS},
+        'response_errors': validate_pdf_responses(text),
+    }
+
+
+def _parse_total_line(text, sign):
+    """'TOTAL +' 또는 'TOTAL -' 행에서 4개 유형 점수를 추출합니다."""
+    marker = 'TOTAL +' if sign == '+' else 'TOTAL -'
+    for line in text.splitlines():
+        if marker in line:
+            nums = [int(n) for _, n in re.findall(r'([A-Za-z])\s+(\d+)', line)]
+            if len(nums) >= 4:
+                return dict(zip(LIFO_KEYS, nums[:4]))
+    return None
+
+
+def _parse_component_scores(text, upper=True):
+    """세부 항목 점수(A~L 또는 a~l)를 합산하여 4개 유형 점수를 계산합니다."""
+    letters = 'ABCDEFGHIJKL' if upper else 'abcdefghijkl'
+    scores = {}
+    for line in text.splitlines():
+        for letter, val in re.findall(r'(?:^|\s)([A-La-l])\s+(\d+)(?:\s|$)', line):
+            if letter in letters and letter not in scores:
+                scores[letter] = int(val)
+    if len(scores) < 12:
+        return None
+    groups = {
+        'SG': letters[0::4][:3], 'CT': letters[1::4][:3],
+        'CH': letters[2::4][:3], 'AD': letters[3::4][:3],
+    }
+    return {k: sum(scores[c] for c in cols) for k, cols in groups.items()}
+
+
+def validate_pdf_responses(text):
+    """PDF의 '문항N V' 응답이 규칙(각 4문항에 4,3,2,1 중복 없이 배정)을 지켰는지 검증합니다."""
+    resp = {int(q): int(v) for q, v in re.findall(r'문항(\d+)\s+(\d)', text)}
+    errors = []
+    qs = sorted(resp)
+    for i in range(0, len(qs), 4):
+        grp = qs[i:i + 4]
+        if len(grp) == 4:
+            scores = [resp[q] for q in grp]
+            if sorted(scores) != [1, 2, 3, 4]:
+                errors.append({'questions': f'{grp[0]}-{grp[-1]}', 'scores': scores})
+    return errors
 
 
 def validate_responses(ws):
@@ -257,7 +344,7 @@ st.markdown("""
 st.markdown("""
 <div class="hero">
     <h1>📊 LIFO 진단 → PPT 자동 생성</h1>
-    <p>엑셀 진단 파일을 올리면, 서식이 적용된 PPT 리포트를 자동으로 만들어 드립니다.</p>
+    <p>엑셀 또는 PDF 진단 파일을 올리면, 서식이 적용된 PPT 리포트를 자동으로 만들어 드립니다.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -273,21 +360,21 @@ if not has_results:
         st.markdown("""
 <div class="how-box">
 <ol>
-    <li><b>엑셀 파일 업로드</b> — LIFO 행동강약점 진단 엑셀(.xlsx)을 여러 개 한꺼번에 올려주세요.</li>
+    <li><b>파일 업로드</b> — LIFO 행동강약점 진단 엑셀(.xlsx) 또는 PDF를 여러 개 한꺼번에 올려주세요.</li>
     <li><b>결과 확인</b> — 자동으로 이름, 부서, 점수가 추출됩니다. 이름이 잘못 나왔으면 수정할 수 있습니다.</li>
     <li><b>PPT 다운로드</b> — 버튼 하나로 서식이 적용된 PPT가 생성됩니다.</li>
 </ol>
 </div>
 """, unsafe_allow_html=True)
 
-    st.markdown('<span class="step-label">1</span> <b>엑셀 파일 업로드</b>', unsafe_allow_html=True)
+    st.markdown('<span class="step-label">1</span> <b>엑셀 · PDF 파일 업로드</b>', unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(
     '파일 선택',
-    type=['xlsx'],
+    type=['xlsx', 'pdf'],
     accept_multiple_files=True,
     label_visibility='collapsed' if not has_results else 'visible',
-    help='LIFO 행동강약점(행동유형) 진단지 엑셀 파일을 선택하세요. 여러 개를 한 번에 올릴 수 있습니다.',
+    help='LIFO 행동강약점(행동유형) 진단지 엑셀(.xlsx) 또는 PDF 파일을 선택하세요. 여러 개를 한 번에 올릴 수 있습니다.',
     key='file_uploader',
 )
 
@@ -301,7 +388,7 @@ if uploaded_files:
         progress = progress_placeholder.progress(0, text='분석 중...')
         for idx, f in enumerate(uploaded_files):
             try:
-                data = parse_lifo_excel(f.read(), f.name)
+                data = parse_lifo_file(f.read(), f.name)
                 f.seek(0)
                 results.append(data)
             except Exception as e:
@@ -433,6 +520,6 @@ elif not has_results:
     st.markdown("""
     <div style="text-align:center; padding: 3rem 1rem; color: #aaa;">
         <p style="font-size: 3rem; margin-bottom: 0.5rem;">📂</p>
-        <p>위의 <b>Browse files</b> 버튼을 눌러<br>LIFO 진단 엑셀 파일을 업로드하세요.</p>
+        <p>위의 <b>Browse files</b> 버튼을 눌러<br>LIFO 진단 엑셀 또는 PDF 파일을 업로드하세요.</p>
     </div>
     """, unsafe_allow_html=True)
