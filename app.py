@@ -177,8 +177,20 @@ def _parse_component_scores(text, upper=True):
     return {k: sum(scores[c] for c in cols) for k, cols in groups.items()}
 
 
+# 파일명에서 제거할 라벨 토큰 (LIFO 리포트 관련 단어 / 날짜)
+FILENAME_LABEL_RE = re.compile(
+    r'^(LIFO|진단지|진단|결과지|결과|리포트|레포트|보고서|report|\d{4,})',
+    re.IGNORECASE,
+)
+
+
 def extract_name_from_filename(filename):
-    """파일명에서 이름과 부서를 추출합니다."""
+    """파일명에서 이름과 부서를 추출합니다.
+
+    지원 패턴:
+      - ...진단지_부서_이름              (엑셀 진단지)
+      - 이름_LIFO진단, 부서_이름_LIFO진단  (PDF 리포트)
+    """
     base = os.path.splitext(filename)[0]
 
     # 패턴: ...진단지_부서_이름 (이름에 공백 포함 가능, 예: "이 웅", "정청산 책임")
@@ -191,6 +203,17 @@ def extract_name_from_filename(filename):
     if match2:
         return match2.group(2).strip(), match2.group(1).strip()
 
+    # 'LIFO진단', '결과', 날짜 등 라벨 필드를 제거하고 남는 것을 부서/이름으로 사용
+    # 예: '홍길동_LIFO진단' → 이름 '홍길동', '영업부_홍길동_LIFO진단' → 부서 '영업부', 이름 '홍길동'
+    # (필드 구분은 '_'만 사용해 '이 웅'처럼 공백이 들어간 이름을 보존)
+    tokens = [t.strip() for t in base.split('_') if t.strip()]
+    kept = [t for t in tokens if not FILENAME_LABEL_RE.search(t)]
+    if len(kept) >= 2:
+        return kept[-1].strip(), kept[-2].strip()
+    if len(kept) == 1:
+        return kept[0].strip(), ''
+
+    # 폴백: 언더스코어 분리
     parts = re.split(r'[_]', base)
     if len(parts) >= 2:
         return parts[-1].strip(), parts[-2].strip() if len(parts) >= 3 else ''
