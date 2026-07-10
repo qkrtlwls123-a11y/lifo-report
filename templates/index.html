@@ -330,15 +330,15 @@
 
     <!-- STEP 1: 파일 업로드 -->
     <div class="card" id="card-upload">
-        <h2><span class="step">1</span> 엑셀 파일 업로드</h2>
+        <h2><span class="step">1</span> 엑셀 · PDF 파일 업로드</h2>
         <div class="drop-zone" id="dropZone">
             <div class="icon">📊</div>
-            <p>LIFO 진단 엑셀 파일을 여기에 드래그하거나</p>
+            <p>LIFO 진단 엑셀 또는 PDF 파일을 여기에 드래그하거나</p>
             <label class="btn-select">
                 파일 선택
-                <input type="file" id="fileInput" multiple accept=".xlsx,.xls" style="display:none">
+                <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.pdf" style="display:none">
             </label>
-            <p style="margin-top:8px; font-size:12px; color:#ADB5BD;">.xlsx 파일만 가능 / 여러 파일 동시 업로드 가능</p>
+            <p style="margin-top:8px; font-size:12px; color:#ADB5BD;">.xlsx / .pdf 파일 가능 / 여러 파일 동시 업로드 가능</p>
         </div>
         <div class="file-list" id="fileList"></div>
         <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill"></div></div>
@@ -453,7 +453,8 @@ fileInput.addEventListener('change', e => addFiles(e.target.files));
 
 function addFiles(files) {
     for (const f of files) {
-        if (f.name.endsWith('.xlsx') || f.name.endsWith('.xls')) {
+        const name = f.name.toLowerCase();
+        if (name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.pdf')) {
             if (!selectedFiles.find(sf => sf.name === f.name)) {
                 selectedFiles.push(f);
             }

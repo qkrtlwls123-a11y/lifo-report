@@ -12,10 +12,14 @@ from copy import deepcopy
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_file
 import openpyxl
+from pypdf import PdfReader
 from pptx import Presentation
 from pptx.util import Pt, Emu
 from pptx.dml.color import RGBColor
 from lxml import etree
+
+# LIFO 유형 순서 (S/G, C/T, C/H, A/D)
+LIFO_KEYS = ['SG', 'CT', 'CH', 'AD']
 
 app = Flask(__name__)
 
@@ -91,6 +95,86 @@ def parse_lifo_excel(file_path, original_filename=''):
             'total': int(g_minus) + int(t_minus) + int(h_minus) + int(d_minus)
         },
     }
+
+
+# ── PDF 파싱 ────────────────────────────────────────────────
+def parse_lifo_pdf(file_path, original_filename=''):
+    """PDF 진단 결과지에서 LIFO 점수를 추출합니다.
+
+    엑셀과 동일한 데이터를 담은 PDF 리포트를 지원합니다.
+    - "TOTAL +" / "TOTAL -" 행에서 4개 유형 점수를 읽습니다.
+    - "나의 유형"에서 1순위 유형을 읽습니다.
+    """
+    reader = PdfReader(file_path)
+    text = "\n".join((page.extract_text() or "") for page in reader.pages)
+
+    plus = _parse_total_line(text, '+')
+    minus = _parse_total_line(text, '-')
+
+    # TOTAL 행을 못 찾으면 세부 항목(A~L / a~l) 합산으로 대체
+    if plus is None:
+        plus = _parse_component_scores(text, upper=True)
+    if minus is None:
+        minus = _parse_component_scores(text, upper=False)
+
+    if plus is None or minus is None:
+        raise ValueError('PDF에서 LIFO 점수를 찾을 수 없습니다. (TOTAL +/- 행 확인)')
+
+    name, dept = extract_name_from_filename(original_filename)
+
+    # 1순위 유형: "나의 유형" 근처에서 추출, 없으면 최고 점수로 계산
+    m = re.search(r'(SG|CT|CH|AD)\s*나의\s*유형|나의\s*유형\s*(SG|CT|CH|AD)', text)
+    top_type = (m.group(1) or m.group(2)) if m else max(plus, key=plus.get)
+
+    return {
+        'name': name,
+        'dept': dept,
+        'top_type': str(top_type).strip(),
+        'plus': {
+            **{k: int(plus[k]) for k in LIFO_KEYS},
+            'total': sum(int(plus[k]) for k in LIFO_KEYS),
+        },
+        'minus': {
+            **{k: int(minus[k]) for k in LIFO_KEYS},
+            'total': sum(int(minus[k]) for k in LIFO_KEYS),
+        },
+    }
+
+
+def _parse_total_line(text, sign):
+    """'TOTAL +' 또는 'TOTAL -' 행에서 4개 유형 점수를 추출합니다."""
+    marker = 'TOTAL +' if sign == '+' else 'TOTAL -'
+    for line in text.splitlines():
+        if marker in line:
+            pairs = re.findall(r'([A-Za-z])\s+(\d+)', line)
+            nums = [int(n) for _, n in pairs]
+            if len(nums) >= 4:
+                return dict(zip(LIFO_KEYS, nums[:4]))
+    return None
+
+
+def _parse_component_scores(text, upper=True):
+    """세부 항목 점수(A~L 또는 a~l)를 합산하여 4개 유형 점수를 계산합니다.
+
+    LIFO 채점 규칙:
+      SG = A+E+I,  CT = B+F+J,  CH = C+G+K,  AD = D+H+L  (긍정, 대문자)
+      SG = a+e+i,  CT = b+f+j,  CH = c+g+k,  AD = d+h+l  (부정, 소문자)
+    """
+    letters = 'ABCDEFGHIJKL' if upper else 'abcdefghijkl'
+    scores = {}
+    for line in text.splitlines():
+        for letter, val in re.findall(r'(?:^|\s)([A-La-l])\s+(\d+)(?:\s|$)', line):
+            if letter in letters and letter not in scores:
+                scores[letter] = int(val)
+    if len(scores) < 12:
+        return None
+    groups = {
+        'SG': letters[0::4][:3],   # A/E/I
+        'CT': letters[1::4][:3],   # B/F/J
+        'CH': letters[2::4][:3],   # C/G/K
+        'AD': letters[3::4][:3],   # D/H/L
+    }
+    return {k: sum(scores[c] for c in cols) for k, cols in groups.items()}
 
 
 def extract_name_from_filename(filename):
@@ -295,7 +379,7 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload():
-    """엑셀 파일을 업로드하고 LIFO 점수를 파싱합니다."""
+    """엑셀 또는 PDF 파일을 업로드하고 LIFO 점수를 파싱합니다."""
     if 'files' not in request.files:
         return jsonify({'error': '파일이 없습니다.'}), 400
 
@@ -306,20 +390,26 @@ def upload():
     for f in files:
         if not f.filename:
             continue
-        if not f.filename.endswith(('.xlsx', '.xls')):
-            errors.append(f'{f.filename}: 엑셀 파일이 아닙니다.')
+        lower = f.filename.lower()
+        if lower.endswith(('.xlsx', '.xls')):
+            ext, parser = '.xlsx', parse_lifo_excel
+        elif lower.endswith('.pdf'):
+            ext, parser = '.pdf', parse_lifo_pdf
+        else:
+            errors.append(f'{f.filename}: 엑셀(.xlsx) 또는 PDF 파일이 아닙니다.')
             continue
 
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], f'{uuid.uuid4().hex}{ext}')
         try:
-            safe_name = f'{uuid.uuid4().hex}.xlsx'
-            temp_path = os.path.join(app.config['UPLOAD_FOLDER'], safe_name)
             f.save(temp_path)
-            data = parse_lifo_excel(temp_path, f.filename)
+            data = parser(temp_path, f.filename)
             data['filename'] = f.filename
             results.append(data)
-            os.remove(temp_path)
         except Exception as e:
             errors.append(f'{f.filename}: {str(e)}')
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
     return jsonify({'results': results, 'errors': errors})
 
